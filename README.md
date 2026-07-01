@@ -45,6 +45,31 @@ Resolves via [`kotoba-lang/occupation`](https://github.com/kotoba-lang/occupatio
 See [`docs/business-model.md`](docs/business-model.md) and
 [`docs/operator-guide.md`](docs/operator-guide.md).
 
+## Reference implementation
+
+`src/community_health/{store,governor}.cljc` is a minimal but real
+implementation of the Core Contract above (pure cljc, no external deps):
+
+- `community-health.store` — `Store` protocol + `MemStore`: residents,
+  screenings, referrals. A screening/referral can only be recorded against
+  a registered (consented) resident (consent provenance).
+- `community-health.governor` — `CommunityHealthGovernor`: `assess` gates a
+  proposal against the resident-consent env. Hard invariants force `:hold`
+  (no resident, direct-write instead of `:propose`); referrals flagged
+  `:urgent? true` **always** escalate to `:human-approval` regardless of
+  safety-class or confidence — this cannot be suppressed;
+  `:high`/`:safety-critical` and low-confidence proposals also escalate.
+
+```bash
+clojure -M:test   # 7 tests, 13 assertions, green
+```
+
+This is what backs this repo's `:maturity :implemented` entry in
+[`kotoba-lang/occupation`](https://github.com/kotoba-lang/occupation) —
+the 9th `cloud-itonami-isco-*` occupation to reach that tier, after
+`cloud-itonami-isco-6112`, `-2221`, `-7126`, `-4321`, `-9312`, `-5322`,
+`-8332` and `-1321` (ADR-2607012000).
+
 ## License
 
 AGPL-3.0-or-later.
