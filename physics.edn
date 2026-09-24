@@ -1,0 +1,34 @@
+;; What this occupation's robot physically does, declared for
+;; kotoba.robotics.process (kotoba-lang/robotics). `kbb -M:physics` runs it.
+;;
+;; README "Robotics premise": an outreach and screening robot performs
+;; check-in, basic vitals capture and wayfinding at community sites (ISCO 3253
+;; community health workers). Its physical work: escorting a resident from
+;; check-in to the screening station at the resident's pace, and keeping the
+;; outreach vaccine cooler cold through a day at an outdoor site.
+;;
+;; Every number without a cited source is marked `estimate` in its :basis.
+;; Replacing an estimate with a sourced value is this bot's growth work.
+{:physics/schema "itonami.physical-ai.spec.v1"
+ :repo "cloud-itonami/cloud-itonami-isco-3253"
+ :cases
+ [{:id :escort-resident-to-screening
+   :kind :transport
+   :procedure "robot carrying the vitals kit escorts a resident 60 m from check-in to the screening station at the resident's walking pace"
+   :params {:mass-kg 35.0 :payload-kg 8.0 :distance-m 60.0 :a-max-mps2 0.3
+            :brake-decel-mps2 0.5 :drive-force-n 120.0 :crr 0.02
+            :cog-height-m 0.70 :support-half-length-m 0.25}
+   :sweep {:param :v-max-mps :values [0.4 0.6 0.8 1.0 1.2]}
+   :quantity :cycle-time-s
+   :limit {:max 120.0 :basis "estimate: a resident reaches screening within 2 minutes of check-in so the queue keeps moving"}
+   :boundary {:lo 0.2 :hi 1.2}}
+  {:id :outreach-vaccine-cooler-wall
+   :kind :thermal
+   :procedure "an 8-hour outdoor outreach day at 32 °C: inner surface of the polyurethane cooler wall, interior held near 5 °C by conditioned packs"
+   :params {:conductivity-w-mk 0.025 :density-kg-m3 40.0 :specific-heat-j-kgk 1500.0
+            :t0-c 5.0 :t-hot-c 32.0 :h-front-w-m2k 10.0 :t-back-ambient-c 5.0 :h-back-w-m2k 5.0
+            :threshold-c 8.0 :duration-s 28800.0 :nodes 11}
+   :sweep {:param :thickness-m :values [0.01 0.02 0.03 0.05 0.08]}
+   :quantity :final-back-c
+   :limit {:max 8.0 :basis "CDC Vaccine Storage and Handling Toolkit: refrigerated vaccines are kept at 2-8 °C"}
+   :boundary {:lo 0.01 :hi 0.08}}]}
