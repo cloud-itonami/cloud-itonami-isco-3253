@@ -79,3 +79,22 @@
           "欠落した :confidence は 0.0 であって 1.0 ではない")
       (is (not= :proceed (:decision result))
           "確信度不明の提案が自動で通ってはならない"))))
+
+(deftest holds-when-the-record-names-another-resident
+  (let [env (governor/env-for-store (fresh-store))
+        proposal {:action :screen :resident-id "res-1" :safety-class :low
+                  :effect :propose :confidence 0.9
+                  :record {:screening-id "s1" :resident-id "res-2" :result :normal}}
+        result (governor/assess env proposal)]
+    (is (= :hold (:decision result)))
+    (is (some #(= :record-resident-mismatch (:rule %)) (:violations result)))))
+
+(deftest urgent-record-escalates-without-the-proposal-flag
+  (let [env (governor/env-for-store (fresh-store))
+        proposal {:action :refer :resident-id "res-1" :safety-class :none
+                  :effect :propose :confidence 1.0
+                  :record {:referral-id "r1" :resident-id "res-1"
+                           :provider "clinic-a" :urgent? true}}
+        result (governor/assess env proposal)]
+    (is (= :human-approval (:decision result)))
+    (is (= :urgent-risk (:reason result)))))

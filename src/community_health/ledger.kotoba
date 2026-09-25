@@ -1,0 +1,28 @@
+(ns community-health.ledger
+  "The audit ledger of the ISCO-08 3253 community-health-outreach actor:
+  one entry per governor decision, per human approval, and per refused
+  approval, in the order they happened. Append-only -- there is no
+  update or delete, and every entry carries its position `:seq`, so a
+  missing or reordered entry shows as a gap rather than disappearing.
+
+  Behind a `Ledger` protocol for the same reason `community-health.store`
+  is behind `Store`: MemLedger is the default, a durable backend is a
+  swap. Holds are recorded as well as commits -- a refusal that leaves no
+  trace cannot be audited.")
+
+(defprotocol Ledger
+  (append! [lg entry] "Append `entry`; returns it with its `:seq`.")
+  (entries [lg] "All entries, oldest first."))
+
+(defrecord MemLedger [state]
+  Ledger
+  (append! [_ entry]
+    (peek (swap! state (fn [es] (conj es (assoc entry :seq (count es)))))))
+  (entries [_] @state))
+
+(defn mem-ledger [] (->MemLedger (atom [])))
+
+(defn entry-at
+  "The entry at position `n`, or nil."
+  [lg n]
+  (get (entries lg) n))

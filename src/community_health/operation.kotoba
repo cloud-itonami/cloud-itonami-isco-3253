@@ -1,0 +1,70 @@
+(ns community-health.operation
+  "The only path from an Outreach Advisor proposal to an operating record.
+
+      proposal -> CommunityHealthGovernor/assess -> ledger entry
+                   :proceed         -> record written, entry :committed? true
+                   :human-approval  -> nothing written until `approve!`
+                   :hold            -> nothing written, ever
+
+  A proposal names an `:action` (#{:screen :refer}) and carries the
+  `:record` that action would append (a screening or a referral). The
+  governor sees the record too (invariants 3 and 4 in
+  `community-health.governor`), so the record that is written is the
+  record that was assessed.
+
+  `approve!` is the human sign-off for an escalated entry. It refuses --
+  and records the refusal -- when the approver is unnamed, when the entry
+  is not an escalation (a :hold cannot be signed over), or when the entry
+  was already approved (one sign-off writes one record)."
+  (:require [community-health.store :as store]
+            [community-health.governor :as governor]
+            [community-health.ledger :as ledger]))
+
+(def record-fns
+  {:screen store/record-screening!
+   :refer  store/record-referral!})
+
+(defn- commit! [st {:keys [action record]}]
+  ((record-fns action) st record))
+
+(defn- assess [st proposal]
+  (if (contains? record-fns (:action proposal))
+    (governor/assess (governor/env-for-store st) proposal)
+    {:decision :hold
+     :violations [{:rule :unknown-action
+                   :detail (str "action " (pr-str (:action proposal))
+                                " は " (pr-str (set (keys record-fns))) " に無い")}]
+     :confidence (or (:confidence proposal) 0.0)}))
+
+(defn submit!
+  "Assess `proposal`, write its record only on :proceed, and append one
+  ledger entry either way. Returns the ledger entry."
+  [st lg proposal]
+  (let [{:keys [decision] :as verdict} (assess st proposal)
+        committed? (= :proceed decision)]
+    (when committed? (commit! st proposal))
+    (ledger/append! lg (merge {:event :assessed :proposal proposal
+                               :committed? committed?}
+                              (select-keys verdict [:decision :violations :reason :confidence])))))
+
+(defn- approval-refusal [lg n approver]
+  (let [e (ledger/entry-at lg n)]
+    (cond
+      (not (and (string? approver) (seq approver)))  :no-approver
+      (nil? e)                                       :no-such-entry
+      (not= :assessed (:event e))                    :not-an-assessment
+      (not= :human-approval (:decision e))           :not-escalated
+      (some #(and (= :approved (:event %)) (= n (:of %)))
+            (ledger/entries lg))                     :already-approved)))
+
+(defn approve!
+  "Human sign-off on the escalated ledger entry at `n` by `approver`.
+  Writes that entry's record and appends an :approved entry, or appends
+  an :approval-refused entry naming the reason. Returns the new entry."
+  [st lg n approver]
+  (if-let [why (approval-refusal lg n approver)]
+    (ledger/append! lg {:event :approval-refused :of n :approver approver
+                        :reason why :committed? false})
+    (do (commit! st (:proposal (ledger/entry-at lg n)))
+        (ledger/append! lg {:event :approved :of n :approver approver
+                            :committed? true}))))
