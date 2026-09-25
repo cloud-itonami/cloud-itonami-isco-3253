@@ -47,7 +47,7 @@ See [`docs/business-model.md`](docs/business-model.md) and
 
 ## Reference implementation
 
-`src/community_health/{store,governor}.cljc` is a minimal but real
+`src/community_health/{store,governor,operation,ledger}.kotoba` is a minimal but real
 implementation of the Core Contract above (pure cljc, no external deps):
 
 - `community-health.store` — `Store` protocol + `MemStore`: residents,
@@ -59,16 +59,30 @@ implementation of the Core Contract above (pure cljc, no external deps):
   `:urgent? true` **always** escalate to `:human-approval` regardless of
   safety-class or confidence — this cannot be suppressed;
   `:high`/`:safety-critical` and low-confidence proposals also escalate.
+  The urgent flag is read from the record being written as well as from
+  the proposal, and a record naming a resident other than the one whose
+  consent was checked is held (`:record-resident-mismatch`).
+- `community-health.operation` — the only path from a proposal to a
+  record: `submit!` writes on `:proceed` only; `:human-approval` writes
+  nothing until `approve!` by a named approver (once per entry; a `:hold`
+  cannot be signed over).
+- `community-health.ledger` — append-only audit ledger: every decision,
+  approval and refused approval, each with its gapless `:seq`.
 
 ```bash
-kbb -M:test   # 7 tests, 13 assertions, green
+kbb -M:test   # run_tests.kotoba: loads the .kotoba sources, runs every *-test ns
 ```
 
+20 tests / 55 assertions green. `run_tests.kotoba` refuses (exit 2) to
+report a pass on a run below that count, and exits 1 on any failure.
+(`test/community_health/physics_spec_test.cljk` is the physical-AI bot's
+spec and is not part of this suite.)
+
 This repo's own `blueprint.edn` currently declares `:itonami.blueprint/maturity
-:blueprint`, not `:implemented`: `store`/`governor` are real, but there is no
-compiled `langgraph-clj` StateGraph, Advisor protocol, or audit ledger wired
-around them yet, so the actor cannot yet run an end-to-end proposal ->
-governor -> commit/hold cycle. Any `:implemented`-tier listing for this repo
+:blueprint`, not `:implemented`: `store`/`governor`/`operation`/`ledger` are
+real and the proposal -> governor -> commit/hold -> ledger cycle runs, but
+there is no compiled `langgraph-clj` StateGraph or Advisor protocol
+producing the proposals yet. Any `:implemented`-tier listing for this repo
 in [`kotoba-lang/occupation`](https://github.com/kotoba-lang/occupation)
 predates that correction and should be treated as stale until the missing
 StateGraph/Advisor/ledger layer is built.

@@ -1,0 +1,115 @@
+(ns community-health.operation-test
+  "The operation path writes a record only when the governor proceeds or a
+  named human signs off an escalation, and every decision -- including
+  every refusal -- is in the ledger."
+  (:require [clojure.test :refer [deftest is testing]]
+            [community-health.store :as store]
+            [community-health.ledger :as ledger]
+            [community-health.operation :as op]))
+
+(defn- fresh []
+  (let [st (store/mem-store)]
+    (store/register-resident! st {:resident-id "res-1" :consented-at "2026-01-01"})
+    [st (ledger/mem-ledger)]))
+
+(defn- screen [resident-id & {:as over}]
+  (merge {:action :screen :resident-id resident-id :safety-class :low
+          :effect :propose :confidence 0.9
+          :record {:screening-id "s1" :resident-id resident-id :result :normal}}
+         over))
+
+(defn- refer [resident-id & {:as over}]
+  (merge {:action :refer :resident-id resident-id :safety-class :low
+          :effect :propose :confidence 0.9
+          :record {:referral-id "r1" :resident-id resident-id
+                   :provider "clinic-a" :urgent? false}}
+         over))
+
+(deftest clean-proposal-is-written-and-recorded
+  (let [[st lg] (fresh)
+        e (op/submit! st lg (screen "res-1"))]
+    (is (= :proceed (:decision e)))
+    (is (true? (:committed? e)))
+    (is (= 1 (count (store/screenings-of st "res-1"))))
+    (is (= [0] (map :seq (ledger/entries lg))))))
+
+(deftest unconsented-resident-is-held-and-nothing-is-written
+  (let [[st lg] (fresh)
+        e (op/submit! st lg (screen "no-such-resident"))]
+    (is (= :hold (:decision e)))
+    (is (false? (:committed? e)))
+    (is (some #(= :no-resident (:rule %)) (:violations e)))
+    (is (empty? (store/screenings-of st "no-such-resident")))
+    (is (= 1 (count (ledger/entries lg))) "the hold itself is in the ledger")))
+
+(deftest direct-write-effect-is-held
+  (let [[st lg] (fresh)
+        e (op/submit! st lg (screen "res-1" :effect :direct-write))]
+    (is (= :hold (:decision e)))
+    (is (empty? (store/screenings-of st "res-1")))))
+
+(deftest record-naming-another-resident-is-held
+  (testing "consent was checked for res-1, the record would be written for res-2"
+    (let [[st lg] (fresh)
+          p (screen "res-1" :record {:screening-id "s1" :resident-id "res-2" :result :flagged})
+          e (op/submit! st lg p)]
+      (is (= :hold (:decision e)))
+      (is (some #(= :record-resident-mismatch (:rule %)) (:violations e)))
+      (is (empty? (store/screenings-of st "res-1")))
+      (is (empty? (store/screenings-of st "res-2"))))))
+
+(deftest urgent-record-escalates-even-when-the-proposal-omits-the-flag
+  (let [[st lg] (fresh)
+        p (refer "res-1" :record {:referral-id "r1" :resident-id "res-1"
+                                  :provider "clinic-a" :urgent? true})
+        e (op/submit! st lg p)]
+    (is (= :human-approval (:decision e)))
+    (is (= :urgent-risk (:reason e)))
+    (is (false? (:committed? e)))
+    (is (empty? (store/referrals-of st "res-1")))))
+
+(deftest named-approver-writes-the-escalated-record-once
+  (let [[st lg] (fresh)
+        e (op/submit! st lg (refer "res-1" :urgent? true))
+        a (op/approve! st lg (:seq e) "chw-supervisor-7")]
+    (is (= :approved (:event a)))
+    (is (= "chw-supervisor-7" (:approver a)))
+    (is (= 1 (count (store/referrals-of st "res-1"))))
+    (testing "a second sign-off on the same entry is refused and writes nothing"
+      (let [again (op/approve! st lg (:seq e) "chw-supervisor-8")]
+        (is (= :approval-refused (:event again)))
+        (is (= :already-approved (:reason again)))
+        (is (= 1 (count (store/referrals-of st "res-1"))))))))
+
+(deftest unnamed-approver-is-refused-and-the-refusal-recorded
+  (let [[st lg] (fresh)
+        e (op/submit! st lg (refer "res-1" :urgent? true))
+        a (op/approve! st lg (:seq e) "")]
+    (is (= :approval-refused (:event a)))
+    (is (= :no-approver (:reason a)))
+    (is (empty? (store/referrals-of st "res-1")))
+    (is (= [:assessed :approval-refused] (map :event (ledger/entries lg))))))
+
+(deftest a-hold-cannot-be-signed-over
+  (let [[st lg] (fresh)
+        e (op/submit! st lg (screen "no-such-resident"))
+        a (op/approve! st lg (:seq e) "chw-supervisor-7")]
+    (is (= :not-escalated (:reason a)))
+    (is (empty? (store/screenings-of st "no-such-resident")))))
+
+(deftest unknown-action-is-held
+  (let [[st lg] (fresh)
+        e (op/submit! st lg (screen "res-1" :action :dispense))]
+    (is (= :hold (:decision e)))
+    (is (some #(= :unknown-action (:rule %)) (:violations e)))
+    (is (empty? (store/screenings-of st "res-1")))))
+
+(deftest ledger-is-append-only-and-gapless
+  (let [[st lg] (fresh)
+        first-entry (op/submit! st lg (screen "res-1"))
+        _ (op/submit! st lg (screen "no-such-resident"))
+        _ (op/submit! st lg (refer "res-1" :urgent? true))
+        _ (op/approve! st lg 2 "chw-supervisor-7")]
+    (is (= [0 1 2 3] (map :seq (ledger/entries lg))))
+    (is (= first-entry (ledger/entry-at lg 0))
+        "a later append does not rewrite an earlier entry")))

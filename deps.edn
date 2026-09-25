@@ -3,7 +3,10 @@
         ;; kotoba.robotics.process: the process-physics solvers and probe this
         ;; repo's physics.edn runs on (physical-AI bot, scripts/physical-ai-bots).
         io.github.kotoba-lang/robotics {:local/root "../../kotoba-lang/robotics"}
-}
+
+        ;; kotoba.lang.text (run_tests.kotoba). Kept in step with nbb.edn
+        ;; (the engine reads that file, not this one).
+        io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}}
  :aliases
  {
   ;; kbb -M:physics -> the physical-AI bot's measurement: runs physics.edn on
@@ -18,7 +21,9 @@
          :main-opts    ["-m" "clj-kondo.main"
                         "--lint" "src" "test"
                         "--fail-level" "error"]}
+  ;; run_tests.kotoba, not cognitect.test-runner: the runner resolves only
+  ;; .clj/.cljc and cannot see the .kotoba suite. This one loads the
+  ;; .kotoba sources itself and refuses (exit 2) to report a pass below
+  ;; the count README.md publishes.
   :test {:extra-paths ["test"]
-         :extra-deps {io.github.cognitect-labs/test-runner
-                      {:git/tag "v0.5.1" :git/sha "dfb30dd6605cb6c0efc275e1df1736f6e90d4d73"}}
-         :main-opts ["-m" "cognitect.test-runner"]}}}
+         :main-opts ["run_tests.kotoba"]}}}
